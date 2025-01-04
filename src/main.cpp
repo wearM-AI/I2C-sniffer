@@ -28,17 +28,24 @@
 
 
 #include <Arduino.h>
+#include <Wire.h>
+#include <vector>
 
 //#define I2CTEST  //use it to  run a blinking LED test on SDA and SCL pins
 
-#define PIN_SDA 12  //BLUE
-#define PIN_SCL 13  //Yellow
+#define PIN_SDA 5  //white
+#define PIN_SCL 6  //yellow
 
 #define I2C_IDLE 0
 //#define I2C_START 1
 #define I2C_TRX 2
 //#define I2C_RESP 3
 //#define I2C_STOP 4
+#define SLAVE_ADDR 119
+#define I2C_CLK 400000
+#define I2C_BUFFER_SIZE 64
+
+
 
 static volatile byte i2cStatus = I2C_IDLE;//Status of the I2C BUS
 static uint32_t lastStartMillis = 0;//stoe the last time
@@ -60,6 +67,29 @@ static volatile uint16_t sclUpCnt = 0;//Auxiliary variable to count rising SCL
 static volatile uint16_t sdaUpCnt = 0;//Auxiliary variable to count rising SDA
 static volatile uint16_t sdaDownCnt = 0;//Auxiliary variable to count falling SDA
 
+void IRAM_ATTR i2cTriggerOnRaisingSCL();
+void IRAM_ATTR i2cTriggerOnChangeSDA();
+
+
+#pragma pack(push, 1)
+
+enum i2c_msg_type{
+  TYPE_UNKNOWN = 0,
+  LOCAL_TIMESTAMP,
+  RECORDING_NO,
+  I2C_TYPE_LAST,
+};
+
+struct i2c_packet{
+  uint8_t msg_type;
+  uint8_t msg_id;
+  uint8_t dummy[2];
+  uint32_t data[7];
+}; // Minimum buffer size is 32 bytes, so no reason to make it more efficient
+
+#pragma pack(pop)
+
+std::vector<i2c_packet> pkt_buffer;
 
 ////////////////////////////
 //// Interrupt handlers
@@ -71,6 +101,15 @@ static volatile uint16_t sdaDownCnt = 0;//Auxiliary variable to count falling SD
  */
 void IRAM_ATTR i2cTriggerOnRaisingSCL() 
 {
+	// detachInterrupt(PIN_SCL); //trigger for reading data from SDA
+	// detachInterrupt(PIN_SDA); //for I2C START and STOP
+	// uint8_t i2cbitC1 =0, i2cbitC2 =0;
+	// do
+	// {
+	// 	i2cbitC1 =  digitalRead(PIN_SCL);
+	// 	i2cbitC2 =  digitalRead(PIN_SCL);
+	// } while (i2cbitC1!=i2cbitC2);
+	
 	sclUpCnt++;
 	
 	//is it a false trigger?
@@ -80,9 +119,14 @@ void IRAM_ATTR i2cTriggerOnRaisingSCL()
 		//return;//this is not clear why do we have so many false START
 	}
 
+	do
+	{
+		i2cBitD =  digitalRead(PIN_SDA);
+		i2cBitD2 =  digitalRead(PIN_SDA);
+	} while (i2cBitD!=i2cBitD2);
 
 	//get the value from SDA
-	i2cBitC =  digitalRead(PIN_SDA);
+	i2cBitC =  i2cBitD;
 
 	//decide wherewe are and what to do with incoming data
 	i2cCase = 0;//normal case
@@ -124,7 +168,8 @@ void IRAM_ATTR i2cTriggerOnRaisingSCL()
 		break;//end of case 2 R/W
 
 	}//end of switch
-
+    // attachInterrupt(PIN_SCL, i2cTriggerOnRaisingSCL, RISING); //trigger for reading data from SDA
+	// attachInterrupt(PIN_SDA, i2cTriggerOnChangeSDA, CHANGE); //for I2C START and STOP
 }//END of i2cTriggerOnRaisingSCL() 
 
 /**
@@ -136,6 +181,8 @@ void IRAM_ATTR i2cTriggerOnRaisingSCL()
  */
 void IRAM_ATTR i2cTriggerOnChangeSDA()
 {
+	// detachInterrupt(PIN_SCL); //trigger for reading data from SDA
+	// detachInterrupt(PIN_SDA); //for I2C START and STOP
 	//make sure that the SDA is in stable state
 	do
 	{
@@ -143,13 +190,22 @@ void IRAM_ATTR i2cTriggerOnChangeSDA()
 		i2cBitD2 =  digitalRead(PIN_SDA);
 	} while (i2cBitD!=i2cBitD2);
 
-	//i2cBitD =  digitalRead(PIN_SDA);
+	uint8_t i2cbitC1 =0, i2cbitC2 =0;
+	do
+	{
+		i2cbitC1 =  digitalRead(PIN_SCL);
+		i2cbitC2 =  digitalRead(PIN_SCL);
+	} while (i2cbitC1!=i2cbitC2);
+
+	i2cClk = digitalRead(PIN_SCL);
+
+	i2cBitD =  digitalRead(PIN_SDA);
 
 	if(i2cBitD)//RISING if SDA is HIGH (1)
 	{
 		
-		i2cClk = digitalRead(PIN_SCL);
-		if(i2cStatus=!I2C_IDLE && i2cClk==1)//If SCL still HIGH then it is a STOP sign
+		// i2cClk = digitalRead(PIN_SCL);
+		if(i2cStatus!=I2C_IDLE && i2cClk==1)//If SCL still HIGH then it is a STOP sign
 		{			
 			//i2cStatus = I2C_STOP;
 			i2cStatus = I2C_IDLE;
@@ -164,7 +220,7 @@ void IRAM_ATTR i2cTriggerOnChangeSDA()
 	else //FALLING if SDA is LOW
 	{
 		
-		i2cClk = digitalRead(PIN_SCL);
+		// i2cClk = digitalRead(PIN_SCL);
 		if(i2cStatus==I2C_IDLE && i2cClk)//If SCL still HIGH than this is a START
 		{
 			i2cStatus = I2C_TRX;
@@ -176,6 +232,8 @@ void IRAM_ATTR i2cTriggerOnChangeSDA()
 		}
 		sdaDownCnt++;
 	}
+	// attachInterrupt(PIN_SCL, i2cTriggerOnRaisingSCL, RISING); //trigger for reading data from SDA
+	// attachInterrupt(PIN_SDA, i2cTriggerOnChangeSDA, CHANGE); //for I2C START and STOP
 }//END of i2cTriggerOnChangeSDA()
 
 
@@ -202,26 +260,31 @@ void resetI2cVariable()
 */
 void processDataBuffer()
 {
-	if(bufferPoiW == bufferPoiR)//There is nothing to say
-		return;
-
-	uint16_t pw = bufferPoiW;
-	//print out falseStart
-	Serial.printf("\nSCL up: %d SDA up: %d SDA down: %d false start: %d\n", sclUpCnt, sdaUpCnt, sdaDownCnt, falseStart);
-	//print out the content of the buffer	
-	for(int i=bufferPoiR; i< pw; i++)
-	{
-		Serial.write(dataBuffer[i]);
-		bufferPoiR++;		
+	if(pkt_buffer.size() > 0){
+		Serial.print("t" + String(pkt_buffer.front().msg_type) + "i" + String(pkt_buffer.front().msg_id));
+		for(int idx = 0; idx < 7; idx++){
+			Serial.print("d" + String(idx) + ":" + String(pkt_buffer[0].data[idx]));
+		}
+		Serial.print("\n");
+		pkt_buffer.erase(pkt_buffer.begin());
 	}
-	
-	//if there is no I2C action in progress and there wasn't during the Serial.print then buffer was printed out completly and can be reset.
-	if(i2cStatus == I2C_IDLE && pw==bufferPoiW)
-	{
-		bufferPoiW =0;
-		bufferPoiR =0;
-	}	
 }//END of processDataBuffer()
+
+
+void i2c_isr(int param){
+  #define I2C_RCV_BUFFER_LEN 32
+  #define TIME_DISCREPANCY 50000
+  uint8_t buffer[I2C_RCV_BUFFER_LEN];
+  Wire.readBytes(buffer, I2C_RCV_BUFFER_LEN);
+  i2c_packet* pkt = (i2c_packet*)&buffer;
+
+  pkt_buffer.push_back(*pkt);
+
+  if(pkt_buffer.size() >= 10)
+	pkt_buffer.erase(pkt_buffer.begin());
+
+	// Serial.print("got something");
+}
 
 
 /////////////////////////////////
@@ -229,25 +292,9 @@ void processDataBuffer()
 /////////////////////////////////
 void setup() 
 {
-
-	#ifdef I2CTEST
-	pinMode(PIN_SCL, OUTPUT);   
-    pinMode(PIN_SDA, OUTPUT);	
-	#else
-	//Define pins for SCL, SDA
-	pinMode(PIN_SCL, INPUT_PULLUP);   
-    pinMode(PIN_SDA, INPUT_PULLUP);
-	//pinMode(PIN_SCL, INPUT);   
-    //pinMode(PIN_SDA, INPUT);
-
-
-    //reset variables
-    resetI2cVariable();
-
-    //Atach interrupt handlers to the interrupts on GPIOs
-    attachInterrupt(PIN_SCL, i2cTriggerOnRaisingSCL, RISING); //trigger for reading data from SDA
-	attachInterrupt(PIN_SDA, i2cTriggerOnChangeSDA, CHANGE); //for I2C START and STOP
-	#endif
+    Wire.begin(SLAVE_ADDR, PIN_SDA, PIN_SCL, I2C_CLK);
+    Wire.onReceive(i2c_isr);
+    Wire.setBufferSize(I2C_BUFFER_SIZE);
 	Serial.begin(115200);
 }//END of setup
 
@@ -256,26 +303,6 @@ void setup()
  */
 void loop() 
 {
-
-	#ifdef I2CTEST
-	digitalWrite(PIN_SCL, HIGH);   //13 SARGA
-    digitalWrite(PIN_SDA, HIGH);	//12 KEK
-	delay(500);
-	digitalWrite(PIN_SCL, HIGH);   //13 SARGA
-    digitalWrite(PIN_SDA, LOW);	//12 KEK
-	delay(500);
-	#else
-
-    //if it is in IDLE, then write out the databuffer to the serial consol
-    if(i2cStatus == I2C_IDLE)
-	{
-		processDataBuffer();
-        Serial.print("\rStart delay    ");		
-        delay(5000);
-        Serial.print("\rEnd delay    ");
-		delay(500);
-	}
-
-	#endif
-
+	processDataBuffer();
+	sleep(0.1);
 }//END of loop
