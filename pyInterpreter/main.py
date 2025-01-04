@@ -3,6 +3,8 @@ import glob
 import serial
 import time
 import re
+from tkinter import *
+import tkinter as tk 
 
 
 
@@ -87,6 +89,10 @@ def parseData(buffer):
     return parsedMsg, buffer
 
 
+REC_DATA_TYPE = 2
+
+
+buffer_string = ""
 
 if __name__ == '__main__':
     ports = serial_ports()
@@ -94,11 +100,41 @@ if __name__ == '__main__':
     print("Selected port: " + ports[-1])
     ser = serial.Serial(ports[-1], baudrate=115200)
 
-    buffer_string = ""
-    while True:
+    root = tk.Tk()
+    root.title("Simple GUI")
+    # Display numeric values
+
+    # recNo = -1 # Example numeric value 1
+    recTxt = StringVar()
+    recTxt.set("Rec: -1")
+    value2 = 20  # Example numeric value 2
+    label1 = tk.Label(root, textvariable=recTxt)
+    label1.pack()
+
+    def task():
+        # print("hello")
+        global buffer_string
+        root.after(100, task)
         buffer_string = buffer_string + str(ser.read(ser.inWaiting()))
         print(buffer_string)
         parseddata, buffer_string = parseData(buffer_string)
-        # print(parseddata)
-        time.sleep(0.1)
+        if len(parseddata) == 0:
+            return
+        
+        if(parseddata["type"] == str(REC_DATA_TYPE)):
+            recNo = parseddata["d0"]
+            recTxt.set(f"Rec: {recNo}")
+        
+
+    # Create and pack the labels
+
+
+    # label2 = tk.Label(root, text=f"Value 2: {value2}")
+    # label2.pack()
+
+    # Run the application
+    root.after(100, task)  # reschedule event in 2 seconds
+    root.mainloop()
+
+
 
