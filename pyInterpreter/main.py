@@ -5,7 +5,8 @@ import time
 import re
 from tkinter import *
 import tkinter as tk 
-
+import threading
+from threading import Thread, Lock
 
 
 def serial_ports():
@@ -93,13 +94,46 @@ REC_DATA_TYPE = 2
 
 
 buffer_string = ""
+mutex = Lock()
+lastTry = 0
+MIN_RETRY_PERIOD = 10
 
 if __name__ == '__main__':
-    ports = serial_ports()
-    print(ports)
-    print("Selected port: " + ports[-1])
-    ser = serial.Serial(ports[-1], baudrate=115200)
+    # ports = serial_ports()
+    # print(ports)
+    # print("Selected port: " + ports[-1])
+    # if ports[-1] != "COM4":
+    #     ser = serial.Serial(ports[-1], baudrate=115200)
 
+    ser = []
+    # active = False
+
+    def openPort_th():
+        global ser, active
+        # active = True
+        ports = serial_ports()
+        if ports[-1] != "COM4":
+            print("Selected port: " + ports[-1])
+            try:
+                ser = serial.Serial(ports[-1], baudrate=115200)
+            except:
+                    pass
+        # active = False
+        # mutex.release()
+
+    
+
+    def openPort():
+        # with mutex:
+        global lastTry
+        # if mutex.acquire(blocking=False):
+        if (time.time() - lastTry) >= MIN_RETRY_PERIOD:
+            lastTry = time.time()
+            t1 = threading.Thread(target=openPort_th)
+            t1.start()
+
+
+    openPort()
     root = tk.Tk()
     root.title("Simple GUI")
     # Display numeric values
@@ -113,9 +147,19 @@ if __name__ == '__main__':
 
     def task():
         # print("hello")
-        global buffer_string
+        global buffer_string, ser
         root.after(100, task)
-        buffer_string = buffer_string + str(ser.read(ser.inWaiting()))
+        failed = FALSE
+        try:
+            buffer_string = buffer_string + str(ser.read(ser.inWaiting()))
+        except Exception as e:
+            print(e)
+            failed = True
+            openPort()
+        
+
+        if failed:
+            recTxt.set("Rec: -1")
         print(buffer_string)
         parseddata, buffer_string = parseData(buffer_string)
         if len(parseddata) == 0:
